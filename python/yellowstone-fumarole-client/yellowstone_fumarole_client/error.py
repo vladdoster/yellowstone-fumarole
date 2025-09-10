@@ -1,4 +1,4 @@
-from typing import Mapping
+from typing import Any, Mapping
 
 
 class FumaroleClientError(Exception):
@@ -14,6 +14,6 @@ class SubscribeError(FumaroleClientError):
 class DownloadSlotError(SubscribeError):
     """Exception raised for errors in the download slot process."""
     
-    def __init__(self, message: str, ctx: Mapping[str, any]):
+    def __init__(self, message: str, ctx: Mapping[str, Any]):
         super().__init__(message)
         self.ctx = ctx

@@ -1,6 +1,9 @@
 # DataPlaneConn
 from abc import abstractmethod, ABC
 import asyncio
+from contextlib import suppress
+from typing import Any
+
 import grpc
 from typing import Literal, Mapping, Optional
 from collections import deque
@@ -16,7 +19,6 @@ from yellowstone_fumarole_proto.geyser_pb2 import (
     SubscribeRequest,
     SubscribeUpdate,
     SubscribeUpdateSlot,
-    CommitmentLevel as ProtoCommitmentLevel,
 )
 from yellowstone_fumarole_proto.fumarole_pb2 import (
     ControlCommand,
@@ -30,7 +32,6 @@ from yellowstone_fumarole_proto.fumarole_pb2_grpc import (
     FumaroleStub,
 )
 from yellowstone_fumarole_client.utils.aio import Interval
-from yellowstone_fumarole_client.grpc_connectivity import FumaroleGrpcConnector
 from yellowstone_fumarole_client.error import SubscribeError, DownloadSlotError
 import logging
 
@@ -66,7 +67,7 @@ class DownloadBlockError:
     """Represents an error that occurred during the download of a block."""
     kind: DownloadBlockErrorKind
     message: str
-    ctx: Mapping[str, any]
+    ctx: Mapping[str, Any]
 
     def into_subscribe_error(self) -> SubscribeError:
         """Convert the error into a SubscribeError."""
@@ -257,14 +258,12 @@ class AsyncioFumeDragonsmouthRuntime:
         else:
             slot = download_result.slot
             err_kind = download_result.err.kind
-            LOGGER.error(f"Download error for slot {slot}: {download_result.err}")  
+            LOGGER.error(f"Download error for slot {slot}: {download_result.err}")
             # If the client queue is disconnected, we don't do anything, next run iteration will close anyway.
             self.is_closed = True
             if err_kind != "OutletDisconnected":
-                try:
+                with suppress(asyncio.QueueShutDown):
                     await self.dragonsmouth_outlet.put(download_result.err.into_subscribe_error())
-                except asyncio.QueueShutDown:
-                    pass
 
     async def _force_commit_offset(self):
         LOGGER.debug(f"Force committing offset {self.sm.committable_offset}")
@@ -479,7 +478,7 @@ class GrpcDownloadBlockTaskRun:
         self.dragonsmouth_oulet = dragonsmouth_oulet
 
     def map_tonic_error_code_to_download_block_error(
-        self, 
+        self,
         e: grpc.aio.AioRpcError
     ) -> DownloadBlockError:
         code = e.code()
@@ -550,6 +549,10 @@ class GrpcDownloadBlockTaskRun:
                                 err=DownloadBlockError(
                                     kind="OutletDisconnected",
                                     message="Outlet disconnected",
+                                    ctx = {
+                                        "slot": self.download_request.slot,
+                                        "block_uid": self.download_request.block_uid,
+                                    }
                                 ),
                             )
                     case "block_shard_download_finish":
@@ -580,5 +583,12 @@ class GrpcDownloadBlockTaskRun:
         return DownloadTaskResult(
             kind="Err",
             slot=self.download_request.slot,
-            err=DownloadBlockError(kind="FailedDownload", message="Failed download"),
+            err=DownloadBlockError(
+                kind="FailedDownload",
+                message="Failed download",
+                ctx={
+                    "slot": self.download_request.slot,
+                    "block_uid": self.download_request.block_uid,
+                },
+            ),
         )

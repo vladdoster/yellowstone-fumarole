@@ -1,5 +1,7 @@
 import asyncio
 import logging
+from contextlib import suppress
+
 from yellowstone_fumarole_client.grpc_connectivity import (
     FumaroleGrpcConnector,
 )
@@ -279,10 +281,8 @@ class FumaroleClient:
                     except asyncio.CancelledError:
                         pass
                     if exc is not None:
-                        try:
+                        with suppress(asyncio.QueueShutDown):
                             await dragonsmouth_outlet.put(exc)
-                        except asyncio.QueueShutdown:
-                            pass
                 for t in pending:
                     t.cancel()
             finally:
@@ -295,7 +295,7 @@ class FumaroleClient:
             try:
                 while True:
                     update = await dragonsmouth_outlet.get()
-                    if issubclass(type(update), Exception):
+                    if isinstance(update, Exception):
                         raise update
                     yield update
             except (asyncio.CancelledError, asyncio.QueueShutDown):
